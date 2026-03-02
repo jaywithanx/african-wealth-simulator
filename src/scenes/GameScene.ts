@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { Country, WealthPath, GameState, GameEvent, ActiveEffect } from '../types';
 import { EVENTS } from '../data/events';
+import { SaveService } from '../services/SaveService';
+import { AssistantScene } from './AssistantScene';
 
 const MAX_TOURS = 30;
 const OBJECTIF_VICTOIRE = 1_000_000;
@@ -14,23 +16,30 @@ export class GameScene extends Phaser.Scene {
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
   private eventPanel!: Phaser.GameObjects.Container;
   private actionPanel!: Phaser.GameObjects.Container;
+  private progressBar!: Phaser.GameObjects.Rectangle;
+  private progressLabel!: Phaser.GameObjects.Text;
+  private kofi?: AssistantScene;
 
   constructor() {
     super({ key: 'GameScene' });
   }
 
-  init(data: { pays: Country; voie: WealthPath }): void {
-    const revenuBase = this.calculateRevenu(data.pays, data.voie, 1, []);
-    this.state = {
-      pays: data.pays,
-      voie: data.voie,
-      valeurNette: data.pays.revenuBase * 2,
-      revenuParTour: revenuBase,
-      actifs: 0,
-      tourActuel: 1,
-      niveauVoie: 1,
-      effetsActifs: [],
-    };
+  init(data: { pays: Country; voie: WealthPath } | { savedState: GameState }): void {
+    if ('savedState' in data) {
+      this.state = data.savedState;
+    } else {
+      const revenuBase = this.calculateRevenu(data.pays, data.voie, 1, []);
+      this.state = {
+        pays: data.pays,
+        voie: data.voie,
+        valeurNette: data.pays.revenuBase * 2,
+        revenuParTour: revenuBase,
+        actifs: 0,
+        tourActuel: 1,
+        niveauVoie: 1,
+        effetsActifs: [],
+      };
+    }
   }
 
   create(): void {
@@ -44,11 +53,33 @@ export class GameScene extends Phaser.Scene {
     this.add.rectangle(cx, 35, width, 70, 0x0f0f23);
 
     this.createHUD();
+    this.createProgressBar();
     this.createActionPanel();
     this.createEventPanel();
 
     this.refreshHUD();
+    this.refreshProgressBar();
     this.refreshActionPanel();
+
+    // Launch Kofi assistant
+    this.scene.launch('AssistantScene');
+    this.kofi = this.scene.get('AssistantScene') as AssistantScene;
+
+    // Onboarding if first time
+    const onboarded = localStorage.getItem('kofi_onboarded');
+    if (!onboarded) {
+      localStorage.setItem('kofi_onboarded', '1');
+      this.time.delayedCall(500, () => {
+        this.kofi?.afficherDialogue('onboarding_bienvenue');
+        this.time.delayedCall(3000, () => {
+          const pathTrigger = `onboarding_${this.state.voie.id}`;
+          this.kofi?.afficherDialogue(pathTrigger);
+          this.time.delayedCall(3000, () => {
+            this.kofi?.afficherDialogue('onboarding_premier_tour');
+          });
+        });
+      });
+    }
   }
 
   // ─── HUD ────────────────────────────────────────────────────────────────────
@@ -79,6 +110,36 @@ export class GameScene extends Phaser.Scene {
     this.hudTexts['pays'].setText(`🌍 ${s.pays.nom}`);
     this.hudTexts['voie'].setText(`💼 ${s.voie.emoji} ${s.voie.nom}`);
     this.hudTexts['niveauVoie'].setText(`Niveau voie: ${s.niveauVoie}`);
+  }
+
+  // ─── Progress Bar ─────────────────────────────────────────────────────────────
+
+  private createProgressBar(): void {
+    const { width } = this.scale;
+    const barY = 74;
+    const barW = width - 200 - 20;
+    const barX = 10;
+
+    this.add.rectangle(barX + barW / 2, barY, barW, 12, 0x333355).setOrigin(0.5);
+    this.progressBar = this.add.rectangle(barX, barY, 0, 12, 0xff4444).setOrigin(0, 0.5);
+    this.progressLabel = this.add.text(barX + barW / 2, barY + 8, '', {
+      fontSize: '10px',
+      color: '#CCCCCC',
+    }).setOrigin(0.5, 0);
+  }
+
+  private refreshProgressBar(): void {
+    const pct = Math.min(1, this.state.valeurNette / OBJECTIF_VICTOIRE);
+    const { width } = this.scale;
+    const barW = width - 200 - 20;
+    const newW = Math.round(pct * barW);
+    this.progressBar.setDisplaySize(Math.max(2, newW), 12);
+    // Color: red→green
+    const r = Math.round(255 * (1 - pct));
+    const g = Math.round(220 * pct);
+    const color = (r << 16) | (g << 8);
+    this.progressBar.setFillStyle(color);
+    this.progressLabel.setText(`Objectif: ${Math.round(pct * 100)}% atteint`);
   }
 
   // ─── Action Panel ────────────────────────────────────────────────────────────
@@ -334,6 +395,7 @@ export class GameScene extends Phaser.Scene {
 
   private doNextTurn(): void {
     const s = this.state;
+    const valeurAvant = s.valeurNette;
 
     // Apply income
     let revenuCeTour = this.calculateRevenu(s.pays, s.voie, s.niveauVoie, s.effetsActifs);
@@ -360,14 +422,78 @@ export class GameScene extends Phaser.Scene {
       this.applyEvent(event);
     }
 
+    // Gain/loss animation
+    const delta = s.valeurNette - valeurAvant;
+    this.showGainLossAnim(delta);
+
     // Advance turn
     s.tourActuel++;
 
     this.refreshHUD();
+    this.refreshProgressBar();
     this.refreshActionPanel();
+
+    // Save state
+    SaveService.save(s);
+    this.showSaveIndicator();
+
+    // Kofi turn-based triggers
+    if (s.valeurNette < 15000) {
+      this.kofi?.afficherDialogue('argent_bas');
+    } else if (s.tourActuel === 15) {
+      this.kofi?.afficherDialogue('tour_15');
+    } else if (s.tourActuel === 25) {
+      this.kofi?.afficherDialogue('tour_25');
+    } else {
+      const nextNiveau = s.niveauVoie + 1;
+      const upgradeCost = nextNiveau === 2 ? COUT_UPGRADE_N2 : nextNiveau === 3 ? COUT_UPGRADE_N3 : null;
+      if (upgradeCost !== null && s.valeurNette >= upgradeCost) {
+        this.kofi?.afficherDialogue('upgrade_disponible');
+      }
+    }
 
     // Check win/lose conditions
     this.checkEndConditions();
+  }
+
+  private showSaveIndicator(): void {
+    const { width } = this.scale;
+    const label = this.add.text(width - 10, 76, '💾 Sauvegardé ✓', {
+      fontSize: '11px',
+      color: '#90EE90',
+    }).setOrigin(1, 0.5);
+
+    this.time.delayedCall(2000, () => {
+      this.tweens.add({
+        targets: label,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => label.destroy(),
+      });
+    });
+  }
+
+  private showGainLossAnim(delta: number): void {
+    if (Math.abs(delta) < 1) return;
+    const { width, height } = this.scale;
+    const x = width / 2 - 100;
+    const y = height / 2;
+    const sign = delta >= 0 ? '+' : '';
+    const color = delta >= 0 ? '#00FF88' : '#FF4444';
+    const label = this.add.text(x, y, `${sign}${this.fmt(delta)}`, {
+      fontSize: '18px',
+      color,
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(10);
+
+    this.tweens.add({
+      targets: label,
+      y: y - 60,
+      alpha: 0,
+      duration: 1200,
+      ease: 'Cubic.easeOut',
+      onComplete: () => label.destroy(),
+    });
   }
 
   private pickRandomEvent(): GameEvent | null {
@@ -414,6 +540,13 @@ export class GameScene extends Phaser.Scene {
       this.addEventLog(`${event.type === 'positif' ? '✅' : '⚠️'} ${event.nom}: ${event.description}`, color);
     }
 
+    // Kofi reacts to events
+    if (event.type === 'positif') {
+      this.kofi?.afficherDialogue('evenement_positif');
+    } else {
+      this.kofi?.afficherDialogue('evenement_negatif');
+    }
+
     // Ensure net worth not negative after event
     if (s.valeurNette < 0) s.valeurNette = 0;
   }
@@ -431,7 +564,7 @@ export class GameScene extends Phaser.Scene {
       pays.bonusType === 'tous' ||
       (pays.bonusType === 'agriculture' && voie.id === 'agriculture') ||
       (pays.bonusType === 'commerce' && voie.id === 'commerce') ||
-      (pays.bonusType === 'mines' && voie.id === 'entrepreneuriat')
+      (pays.bonusType === 'mines' && voie.id === 'mines')
     ) {
       revenu *= 1 + pays.bonusValeur;
     }
@@ -461,34 +594,46 @@ export class GameScene extends Phaser.Scene {
     const s = this.state;
 
     if (s.valeurNette >= OBJECTIF_VICTOIRE) {
-      this.scene.start('GameOverScene', {
-        victoire: true,
-        valeurNette: s.valeurNette,
-        tours: s.tourActuel - 1,
-        pays: s.pays.nom,
-        voie: s.voie.nom,
+      this.kofi?.afficherDialogue('victoire');
+      SaveService.delete();
+      this.time.delayedCall(1500, () => {
+        this.scene.start('GameOverScene', {
+          victoire: true,
+          valeurNette: s.valeurNette,
+          tours: s.tourActuel - 1,
+          pays: s.pays.nom,
+          voie: s.voie.nom,
+        });
       });
       return;
     }
 
     if (s.valeurNette <= 0) {
-      this.scene.start('GameOverScene', {
-        victoire: false,
-        valeurNette: 0,
-        tours: s.tourActuel - 1,
-        pays: s.pays.nom,
-        voie: s.voie.nom,
+      this.kofi?.afficherDialogue('defaite');
+      SaveService.delete();
+      this.time.delayedCall(1500, () => {
+        this.scene.start('GameOverScene', {
+          victoire: false,
+          valeurNette: 0,
+          tours: s.tourActuel - 1,
+          pays: s.pays.nom,
+          voie: s.voie.nom,
+        });
       });
       return;
     }
 
     if (s.tourActuel > MAX_TOURS) {
-      this.scene.start('GameOverScene', {
-        victoire: false,
-        valeurNette: s.valeurNette,
-        tours: MAX_TOURS,
-        pays: s.pays.nom,
-        voie: s.voie.nom,
+      this.kofi?.afficherDialogue('defaite');
+      SaveService.delete();
+      this.time.delayedCall(1500, () => {
+        this.scene.start('GameOverScene', {
+          victoire: false,
+          valeurNette: s.valeurNette,
+          tours: MAX_TOURS,
+          pays: s.pays.nom,
+          voie: s.voie.nom,
+        });
       });
     }
   }

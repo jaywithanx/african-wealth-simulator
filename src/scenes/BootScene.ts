@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { SaveService } from '../services/SaveService';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -44,8 +45,33 @@ export class BootScene extends Phaser.Scene {
       ease: 'Linear',
       onComplete: () => {
         loadingText.setText('Prêt !');
+
+        // Show resume button if save exists
+        if (SaveService.hasSave()) {
+          const resumeBg = this.add.rectangle(cx, cy + 110, 280, 48, 0x1a4a1a);
+          resumeBg.setStrokeStyle(2, 0xFFD700);
+
+          this.add.text(cx, cy + 110, '▶ Reprendre la partie', {
+            fontSize: '18px',
+            color: '#FFD700',
+            fontStyle: 'bold',
+          }).setOrigin(0.5);
+
+          resumeBg.setInteractive({ useHandCursor: true });
+          resumeBg.on('pointerover', () => resumeBg.setAlpha(0.8));
+          resumeBg.on('pointerout', () => resumeBg.setAlpha(1));
+          resumeBg.on('pointerdown', () => {
+            const saved = SaveService.load();
+            if (saved) {
+              this.scene.start('GameScene', { savedState: saved });
+            }
+          });
+        }
+
         this.time.delayedCall(400, () => {
-          this.scene.start('CountrySelectScene');
+          if (!SaveService.hasSave()) {
+            this.scene.start('CountrySelectScene');
+          }
         });
       },
     });

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { GameOverData } from '../types';
+import { AssistantScene } from './AssistantScene';
 
 export class GameOverScene extends Phaser.Scene {
   constructor() {
@@ -85,5 +86,16 @@ export class GameOverScene extends Phaser.Scene {
     replayBg.on('pointerdown', () => {
       this.scene.start('CountrySelectScene');
     });
+
+    // Launch Kofi with appropriate expression
+    this.scene.launch('AssistantScene');
+    const kofi = this.scene.get('AssistantScene') as AssistantScene;
+    const emotion = data.victoire ? 'heureux' : 'triste';
+    kofi.afficherMessage(
+      data.victoire
+        ? 'CHEF!!! ON A RÉUSSI!!! 🎉🎉🎉'
+        : 'Chef... je suis vraiment désolé. Mais les grands bâtisseurs ne s\'arrêtent pas!',
+      emotion,
+    );
   }
 }
