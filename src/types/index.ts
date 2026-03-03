@@ -11,7 +11,7 @@ export interface Country {
 }
 
 export interface WealthPath {
-  id: 'agriculture' | 'commerce' | 'entrepreneuriat';
+  id: 'agriculture' | 'commerce' | 'entrepreneuriat' | 'mines';
   nom: string;
   emoji: string;
   description: string;
@@ -24,7 +24,7 @@ export interface GameEvent {
   description: string;
   type: 'positif' | 'negatif';
   effet: EventEffect;
-  cheminsCibles: Array<'agriculture' | 'commerce' | 'entrepreneuriat' | 'tous'>;
+  cheminsCibles: Array<'agriculture' | 'commerce' | 'entrepreneuriat' | 'mines' | 'tous'>;
   paysCibles?: string[];
   duree?: number;
 }

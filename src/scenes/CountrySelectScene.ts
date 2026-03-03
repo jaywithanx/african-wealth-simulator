@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import { COUNTRIES } from '../data/countries';
 import { Country, WealthPath } from '../types';
+import { SaveService } from '../services/SaveService';
+import { PAYS_COMMENTAIRES } from '../data/dialogues';
+import { AssistantScene } from './AssistantScene';
 
 const WEALTH_PATHS: WealthPath[] = [
   {
@@ -24,6 +27,13 @@ const WEALTH_PATHS: WealthPath[] = [
     description: 'Croissance lente au début, exponentielle ensuite',
     multiplicateurBase: 0.8,
   },
+  {
+    id: 'mines',
+    nom: 'Mines & Ressources',
+    emoji: '⛏️',
+    description: 'Revenus élevés, sensible aux crises politiques',
+    multiplicateurBase: 1.3,
+  },
 ];
 
 export class CountrySelectScene extends Phaser.Scene {
@@ -32,6 +42,7 @@ export class CountrySelectScene extends Phaser.Scene {
   private startButton!: Phaser.GameObjects.Container;
   private countryCards: Map<string, Phaser.GameObjects.Container> = new Map();
   private pathButtons: Map<string, Phaser.GameObjects.Container> = new Map();
+  private kofi?: AssistantScene;
 
   constructor() {
     super({ key: 'CountrySelectScene' });
@@ -78,16 +89,22 @@ export class CountrySelectScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    const pathW = 250;
-    const pathStartX = cx - pathW - 10;
+    // 4 buttons at 185px each
+    const pathW = 185;
+    const totalPathW = WEALTH_PATHS.length * pathW + (WEALTH_PATHS.length - 1) * 8;
+    const pathStartX = cx - totalPathW / 2 + pathW / 2;
     WEALTH_PATHS.forEach((path, i) => {
-      const x = pathStartX + i * (pathW + 10);
+      const x = pathStartX + i * (pathW + 8);
       this.createPathButton(path, x, 430, pathW, 80);
     });
 
     // Start button
     this.startButton = this.createStartButton(cx, 550);
     this.updateStartButton();
+
+    // Launch Kofi assistant
+    this.scene.launch('AssistantScene');
+    this.kofi = this.scene.get('AssistantScene') as AssistantScene;
   }
 
   private createCountryCard(country: Country, x: number, y: number, w: number, h: number): void {
@@ -210,6 +227,12 @@ export class CountrySelectScene extends Phaser.Scene {
       (card.getAt(0) as Phaser.GameObjects.Rectangle).setStrokeStyle(2, 0xFFD700);
     }
 
+    // Kofi comments on the selected country
+    const comment = PAYS_COMMENTAIRES[country.id];
+    if (comment && this.kofi) {
+      this.kofi.afficherMessage(comment, 'excite');
+    }
+
     this.updateStartButton();
   }
 
@@ -245,6 +268,7 @@ export class CountrySelectScene extends Phaser.Scene {
       bg.setInteractive({ useHandCursor: true });
       bg.removeAllListeners('pointerdown');
       bg.on('pointerdown', () => {
+        SaveService.delete();
         this.scene.start('GameScene', {
           pays: this.selectedCountry,
           voie: this.selectedPath,
